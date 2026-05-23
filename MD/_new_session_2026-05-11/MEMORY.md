@@ -1,0 +1,2 @@
+- [Sensei Universal Cleanup — current state](project_sensei.md) — review-first cleanup engine; Python scaffold passes tests but has 3 high-severity execution-safety gaps
+- [Master-AI / Sensei locations](reference_master_ai_locations.md) — where code, runtime data, baselines, and the Ollama router scripts live on disk

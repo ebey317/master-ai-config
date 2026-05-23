@@ -1,0 +1,71 @@
+# =====================================================================
+# $HOME bundle scope — for /ultraplan and similar bundle operations.
+# Pattern: ignore everything, then explicitly un-ignore narrow paths.
+# Below the un-ignores, a hard denylist catches anything sensitive
+# that might otherwise slip through (api keys, tokens, ssh, etc.).
+# =====================================================================
+
+# 1. Ignore everything at the home-dir root
+/*
+
+# 2. Re-allow the bundle scope at top level
+!/.gitignore
+!/CLAUDE.md
+!/.claude/
+!/MD/
+
+# 3. Inside .claude/ — ignore everything, then re-allow narrow paths
+/.claude/*
+!/.claude/plans/
+!/.claude/projects/
+!/.claude/settings.json
+!/.claude/CLAUDE.md
+
+# 4. Inside .claude/projects/ — only the current user's project, only memory
+/.claude/projects/*/
+!/.claude/projects/-home-elijah/
+/.claude/projects/-home-elijah/*
+!/.claude/projects/-home-elijah/memory/
+
+# 5. Inside the memory dir — markdown only (no JSONL transcripts, no tool-results)
+/.claude/projects/-home-elijah/memory/*
+!/.claude/projects/-home-elijah/memory/*.md
+
+# =====================================================================
+# 6. Hard denylist — never commit these regardless of any un-ignore above
+# =====================================================================
+*api*key*
+*apikey*
+*token*
+*secret*
+*credential*
+*password*
+*.pem
+*.key
+*.p12
+*.pfx
+*.env
+*.env.*
+.env
+.env.*
+.anthropic_env
+.claude-apikey
+.claude-auth
+.master_ai_extension_token
+**/.ssh/**
+**/.gnupg/**
+**/.aws/**
+**/.codex/**
+**/.gphoto/**
+**/.iptv/**
+**/.gcloud/**
+**/.config/gh/**
+**/.config/gcloud/**
+
+# Tool-result caches and transcripts (huge + may contain secrets in pasted content)
+**/tool-results/
+**/*.jsonl
+**/debug/**
+**/daemon*
+**/jobs/**
+**/worktrees/**

@@ -1,0 +1,304 @@
+# Plan — Loop gate + Job entry point + Email helper + Two memory rules
+
+**Same-file handoff convention.** This file is the Plan-mode artifact. On `ExitPlanMode` its contents get copied to `/home/elijah/MD/handoff_2026_05_17_loop_and_jobs.md` (matching yesterday's `handoff_chrome_extension_phase2_split.md` pattern). From that point Claude AND Codex update the SAME file in `~/MD/`. One checkoff table, two agents.
+
+---
+
+## Context
+
+Architecture coordination doc for Claude + Codex working on Master AI. Personal/user-context items live in private MEMORY.md, not here.
+
+Three architectural error patterns surfaced 2026-05-17 driving today's work:
+
+1. The `cap 50→6` partial fix from `d6babf0` doesn't stop the auto-fire loop — last night still ran 17 separate turns through Groq because the cap bounds per-turn rounds, not turn-spawn.
+2. Master AI has zero email-send capability on this box.
+3. Architectural decisions were being made without canvassing prior art from Anthropic / OpenAI / Gemini / Meta / GitHub. Saved as `feedback_proactive_sourcing` rule.
+
+Plus a standing rule: every user input is evaluated against the task list, list maintained (`feedback_task_list_every_input`).
+
+Outcome wanted today: loop gate landed and proven, email-send capability shipped end-to-end, and the memory rules saved so future sessions inherit the discipline.
+
+---
+
+## Section 1 — Order of fixes + dependencies
+
+| # | Item | Owner | Why this slot |
+|---|------|-------|---------------|
+| 1 | Loop gate (`side_panel.js:3625`) | **Claude** | Defensive uncork. Without it, any /apply run auto-burns turns past completion. Smallest commit, biggest leverage. Restart-free (extension reload only). |
+| 2 | Sourcing memory + task-list memory | **Claude** | Pure markdown, no service touch. Land while waiting on Codex. |
+| 3 | Email helper | **Codex** | Independent of job pipeline. Lands the "I owe an email" promise today even if #4 slips. |
+| 4 | Job entry point | **Codex** | Touches both `master_ai.py` AND `stt_server.py` — requires service restart. Do last so other commits don't bundle into the restart. |
+| 5 | End-to-end application submission | **Elijah + both agents observing** | Acceptance test. ONE real submitted application or today is failure regardless of green commits. |
+
+---
+
+## Section 2 — Per-fix table
+
+### 2.1 Loop gate (Claude) — single commit, no restart
+
+- **File:** `/home/elijah/scripts/sensei_extension/side_panel.js`
+- **Anchor (insert AFTER):** the existing guard at the top of `async function continueLoop()`:
+  ```
+  if (state.loop.stopped || !state.loop.active || !state.loop.turn_id) {
+  ```
+- **Stash predicate in `startLoop(data)` (line ~3575):**
+  ```
+  state.loop.last_done = !!(data && data.done === true);
+  state.loop.last_terminal_reason = (data && data.terminal_reason) || "";
+  ```
+- **New guard in `continueLoop()`:**
+  ```
+  if (state.loop.last_done === true || state.loop.last_terminal_reason) {
+    resetLoop();
+    setConnection("Backend ready");
+    return;
+  }
+  ```
+- **Surgical-extract:** `cp side_panel.js /tmp/side_panel.js.rework-2026-05-17-loop-gate` → `git checkout HEAD -- sensei_extension/side_panel.js` → re-apply ONLY the two blocks above → commit → `cp /tmp/...rework... side_panel.js` to restore.
+- **Verification:**
+  1. `grep -nc "last_terminal_reason\|last_done" sensei_extension/side_panel.js` → expect 3 hits (1 set in startLoop, 2 reads in continueLoop).
+  2. Reload extension in `chrome://extensions` (Elijah does this).
+  3. Fire a directive that terminates with `done_directive` or `no_actions`. DevTools Network panel: zero POST to `/chat/continue` after the terminal turn.
+  4. Re-fire last night's 17-turn YouTube prompt → should cap at ≤1 cloud-fast turn after DONE.
+- **Commits:** 1.
+
+### 2.2 Sourcing memory (Claude) — markdown only
+
+- **New file:** `/home/elijah/MD/feedback_proactive_sourcing.md`
+- **Frontmatter:** `name: feedback_proactive_sourcing`, `type: feedback`, description names the rule + the cost (days of Elijah-studying-instead).
+- **Body shape:** "Before proposing architecture for Master AI internals, search GitHub for prior art + read relevant Anthropic published patterns (Claude for Chrome process, computer use, Managed Agents). Cite at least one source per architectural recommendation. **Why:** Elijah lost days re-discovering what was already documented. **How to apply:** at the start of any architecture-shaped task, do one WebSearch / WebFetch pass on the named area before drafting code."
+- **MEMORY.md index line:** insert under `## Rules + feedback (how to behave)`, anchor `- [Numbered 5W+H options before execution](feedback_numbered_5wh_before_execution.md)` — new bullet immediately below.
+- **Verification:** `grep -c proactive_sourcing /home/elijah/MD/MEMORY.md` → 1.
+- **Commits:** 0 (markdown in ~/MD/ is not in the scripts git tree).
+
+### 2.3 Task-list memory (Claude) — markdown only
+
+- **New file:** `/home/elijah/MD/feedback_task_list_every_input.md`
+- **Body shape:** "Every user input is evaluated against the active task list. If the input names work to do, add a TaskCreate. If it cancels/completes/redirects work, update via TaskUpdate. Keep the list current; clear stale entries proactively. **Why:** Elijah works ADHD-style with multiple threads in one session; without an explicit list, items he names get dropped (the 2026-05-17 email is the proof). **How to apply:** at the end of every user message, sweep for task signals before responding."
+- **MEMORY.md index line:** adjacent to 2.2.
+- **Verification:** `grep -c task_list_every_input /home/elijah/MD/MEMORY.md` → 1.
+- **Commits:** 0.
+
+### 2.4 Email helper (Codex) — single commit, no restart
+
+- **Pre-step (Elijah, manual, not Codex):** add `gmail_app_password` key to `~/.master_ai_keys` (JSON file, NOT shell — per `feedback_keys_file_is_json`). Generate at https://myaccount.google.com/apppasswords.
+- **File:** `/home/elijah/scripts/master_ai.py` only. **Does NOT touch stt_server.py.**
+- **Helper anchor (insert ABOVE):** `def handle_image_gen(user_text, prompt, history):`
+- **Helper signature:**
+  ```python
+  def send_email(to, subject, body, *, sender="ebey317@gmail.com", attachments=None):
+      """SMTP_SSL to smtp.gmail.com:465 using gmail_app_password from load_keys().
+      EmailMessage from stdlib. Returns dict {ok: bool, message_id: str, error: str|None}.
+      Logs to ~/.master_ai_email_log.jsonl (one line per send, mirrors log_application pattern)."""
+  ```
+- **REPL command anchor (insert ABOVE):** `# ── image: prefix — local image generation`
+- **REPL surface:** `send: to=<addr> subject=<...> body=<...>` AND `/send` prefix for symmetry. Print result line in BG (success) or BR (failure). One call per invocation.
+- **Non-LLM path:** REPL slash dispatch only — does NOT enter `handle()`'s model lane. Deterministic.
+- **Surgical-extract:** standard `cp master_ai.py /tmp/master_ai.py.rework-2026-05-17-email` → `checkout HEAD` → re-apply helper + REPL block → commit → restore rework.
+- **Verification:**
+  1. `python3 -c "from master_ai import send_email; print(send_email('ebey317@gmail.com', 'wedge test', 'hi'))"` → returns `{ok: True, ...}` and real arrival in inbox (Gmail).
+  2. REPL: `send: to=ebey317@gmail.com subject=wedge body=ok` → "sent" line, 0 exit.
+  3. `tail -1 ~/.master_ai_email_log.jsonl` shows the record.
+- **Commits:** 1.
+
+### 2.5 Job entry point (Codex) — two commits, service restart
+
+- **Files:**
+  - `/home/elijah/scripts/master_ai.py` — REPL `apply <url>` dispatch.
+  - `/home/elijah/scripts/stt_server.py` — new endpoint `POST /apply_start`.
+- **master_ai.py anchor (insert ABOVE):** `# ── image: prefix — local image generation` (same anchor as 2.4 — coordinate ordering so anchors don't shift between commits).
+- **REPL handler shape:**
+  ```
+  if _ut_lower.startswith("apply ") or _ut_lower.startswith("/apply "):
+      url = _extract_url(user_text)
+      if not (Path.home() / ".master_ai_profile.json").exists():
+          print(f"{R}No profile saved — run menu option 11 (profile build) first.{N}")
+          continue
+      r = requests.post("http://127.0.0.1:8080/apply_start", json={"url": url, "session_id": current_session_id}, timeout=30)
+      print(f"{BG}{r.json().get('reply','')}{N}")
+      continue
+  ```
+- **stt_server.py anchor (insert near):** `# POST /dispatch — Codex's dispatcher reports a page-read`. Add new `/apply_start` endpoint that calls `api_handle` directly with a synthesized prompt:
+  ```
+  prompt = (
+      f"Apply to the job at {url}. Open it in a browser tab, read the listing, "
+      f"then fill the application form with my saved profile from /apply_profile. "
+      f"Pause at the first submit click and wait for my OK. After my approval, "
+      f"submit, capture the confirmation reference number, then BROWSER_CLOSE_TAB."
+  )
+  ```
+  This reuses the existing BROWSER_FILL_FORM short-circuit at line ~2019 and `pause_before_first_submit_active` plumbing at ~1925-2833 — no new pause code needed.
+- **Simplify coordination:** already wired (`simplify.jobs` filter at line ~1467, `simplify_dismissed` event at ~5572). Verify path is exercised; no new code.
+- **Surgical-extract:** two cycles, one per file. Each follows the same dance. master_ai.py first, then stt_server.py.
+- **Restart:** `systemctl --user restart master-ai-ui.service` after both commits land. Elijah runs the command.
+- **Verification:**
+  1. `curl -s -X POST http://127.0.0.1:8080/apply_start -H 'Content-Type: application/json' -d '{"url":"https://example.com"}'` returns JSON with `actions[0].kind == "BROWSER_NAV"` (or a clear "profile missing" error).
+  2. In REPL: `apply <real-listing-url>` triggers extension activity within 5s; side panel shows BROWSER_NAV → BROWSER_READ_PAGE → BROWSER_FILL_FORM → pause card.
+- **Commits:** 2 (one per file).
+
+---
+
+## Section 3 — Coordination doc (the same file as this plan, post-ExitPlanMode)
+
+After `ExitPlanMode`, Claude copies this file to `/home/elijah/MD/handoff_2026_05_17_loop_and_jobs.md`. From that point both agents update the same file. Sections that get filled in live:
+
+### 3.a Status table (top of doc, updated by both agents)
+
+| # | Item | Owner | State | Commit | Restart? |
+|---|------|-------|-------|--------|----------|
+| 2.1 | Loop gate | Claude | landed (real-world test pending) | `d594665` | extension reload owed by Elijah |
+| 2.2 | Sourcing memory | Claude | verified | (no git) | n/a |
+| 2.3 | Task-list memory | Claude | verified | (no git) | n/a |
+| 2.4 | ~~Email helper (permanent)~~ | ~~Codex~~ | **SUPERSEDED 2026-05-17 09:00** | — | — |
+| 2.5 | Job entry point | Codex | **PAUSED** per "improve before add" rule | — | — |
+| 2.6 | SEND_EMAIL directive + template dir + Modelfile rule | **Claude** | landed (real-world send pending credential) | `9c79dbe` + `aea8ab9` + 6 templates | master-ai-ui restart + Ollama rebuild owed by Elijah |
+
+### Incident — 2026-05-17 ~09:35 — 2.5 surgical-extract failure (Codex)
+
+`281512b "Add REPL apply entry point"` is a 1101-line diff (+818/-283) that should have been a focused apply-entry-point insertion. Inspection by Claude:
+
+- **REMOVED** `_send_email_log()` and `send_email_via_smtp()` from `9c79dbe` (SEND_EMAIL Python infrastructure).
+- **REMOVED** `_acknowledgment_short_circuit()` from Codex's own `555cc09` (2.9 — pure-acknowledgments classification, just landed minutes before).
+- **ADDED** unrelated rework-pile content: `_extract_url`, `_post_local_json`, `_http_retry_after_seconds`, `_cloud_trip_backoff`, `log_application`, `_cloud_json_headers`, `_ask_openrouter_keyed`, plus other drift across `ask_cloud_*` functions and `orchestrate()`.
+
+**Compounding issue: 2.5 was PAUSED.** The handoff row was explicitly marked `**PAUSED** per "improve before add" rule` before Codex picked it up. He worked from a stale read of the doc.
+
+**Decision: revert, don't reset.** Codex was given:
+```
+git revert --no-edit 281512b
+git log --oneline -3
+md5sum /tmp/master_ai.py.rework-2026-05-17-row-2.9 master_ai.py
+```
+Non-destructive (creates a new undo commit), preserves audit trail, restores both `9c79dbe` and `555cc09` cleanly. Stash reconciliation depends on age of `/tmp/master_ai.py.rework-2026-05-17-row-2.9` — if post-555cc09 the rework can be copied back; if pre-9c79dbe the stash itself is stale and should be discarded in favor of a fresh capture from current working tree.
+
+**Reaffirmed:** 2.5 stays PAUSED. Codex pivots to other bug-fix work or holds.
+
+**Coordination rule reminder for both agents (from feedback_dual_agent_surgical_extract):** the rework pile is a shared minefield. Before each surgical-extract cycle, re-read the handoff status table; if a row is marked PAUSED/SUPERSEDED, do not pick it up. The dance is `cp working /tmp → checkout HEAD → re-apply ONLY the focused edit → commit → restore from /tmp` — if the diff stat for "the focused edit" goes over ~200 lines, something is wrong; stop and re-extract.
+
+**Resolution — 2026-05-17 ~10:20.** Codex landed `849700e Revert "Add REPL apply entry point"`. Verified by both agents:
+- master_ai.py at HEAD contains `send_email_via_smtp` AND `_acknowledgment_short_circuit` — both restored cleanly.
+- Codex replaced the unsafe `/tmp/master_ai.py.rework-2026-05-17-row-2.9` stash with a fresh capture from the new HEAD; md5 matches current working tree.
+- 2.5 row restored to PAUSED in the status table.
+- stt_server.py remains in the rework pile (intentional, untouched by the recovery).
+- Local commit chain: `d594665 → 9c79dbe → aea8ab9 → 9b819d4 → 8df3a1c → 555cc09 → 281512b → 849700e`. Unpushed count = 8 (6 good + 1 bad + 1 revert; bad is neutralized).
+| 2.7 | Cloud-lane RUN/READ synthesis (bug #1 from session-end) | **Codex** | verified | `9b819d4` | master-ai-ui restart |
+| 2.8 | `_API_HANDLE_LOCK` per-lane scope (58.8s queue bug) | **Codex** | verified | `8df3a1c` | master-ai-ui restart |
+| 2.9 | "nice" reopens loop — acknowledgment classification | **Codex** | verified | `555cc09` | master-ai-ui restart |
+
+### Plan reframe — 2026-05-17 09:00 (Elijah explicit)
+
+Today's overarching rule changed: **improve before add** (saved as feedback memory). Codex's prior 2.4 (permanent send_email helper) is SUPERSEDED because email is bigger than a function call — Elijah named the full vision: voice → model polishes/structures/spellchecks → applies template (header/footer/signature) → attaches files → sends. That's a composition+template+attach+send surface, not just SMTP. Permanent helper is overkill; surface is in the directive + Modelfile + template dir, NOT a multi-purpose helper. Claude takes the directive build (2.6).
+
+Codex's new track (2.7-2.9) is bug fixes — all "improve before add" work on existing surfaces:
+- **2.7** Cloud RUN/READ shows the bare `$ jq …` line with no plain-language summary round. Architectural gap. Needs a second model call with `[PREVIOUS ROUND RESULTS]` after RUN/READ, mirroring what BROWSER_* lane already does.
+- **2.8** Real cause of this morning's 58.8s Groq ack: `_API_HANDLE_LOCK` in `stt_server.py` serializes EVERY request including cloud lanes behind local Ollama inference. Split lock scope to per-lane (cloud-fast lane, cloud-deep lane, local lane each get their own lock).
+- **2.9** Acknowledgments ("nice", "ok", "cool", "thanks") shouldn't reopen the action loop. There's some path where they do.
+
+Codex picks the highest-leverage of 2.7-2.9 first; 2.7 likely wins because every cloud RUN/READ today is mute on the result.
+
+### Claude's checkoff notes (2026-05-17 08:45)
+
+- **2.1** Surgical-extract clean. md5 of restored rework matches pre-edit stash. `node -c` passed. `grep -nc "last_terminal_reason\|last_done"` = 3 (1 set in startLoop, 2 reads in continueLoop). Commit `d594665` is the only new line in the diff against `db54f18`. Real-world test still owed: Elijah reloads the extension in `chrome://extensions`, then re-fires last night's YouTube prompt; observe ≤1 cloud-fast turn after DONE.
+- **2.2 / 2.3** Two new files at `~/MD/feedback_proactive_sourcing.md` and `~/MD/feedback_task_list_every_input.md`. Same files mirrored into `~/.claude/projects/-home-elijah/memory/` so auto-memory carries the rules into future sessions. Two new bullets added to both copies of `MEMORY.md` (the `~/MD/` one Codex reads, AND the auto-memory one). Index-line text is identical across both indices.
+- **Rework pile state:** unchanged before/after Claude's work. 12 M + 7 ?? preserved. The only commit added this session beyond `db54f18` is `d594665`. Unpushed count: 1.
+- **Codex's turn.** 2.4 (email helper, master_ai.py only) is independent of 2.5 and ships first. Coordinate the anchor — the master_ai.py `# ── image: prefix — local image generation` block is the insertion point for BOTH 2.4 and 2.5; do them in two separate surgical-extract cycles so the anchor doesn't shift mid-edit.
+
+State enum: `planned → in-progress → landed → verified`. Owner moves their own row through the states. Neither agent moves the other's row.
+
+### 3.b Surgical-extract recipes (written once per file)
+
+- **side_panel.js** — written by Claude
+- **master_ai.py** — written by Codex (used twice: email helper + apply handler)
+- **stt_server.py** — written by Codex (used once: /apply_start)
+
+### 3.c Restart fence
+
+> "Service restart held until both 2.5 commits (master_ai.py + stt_server.py) land. Extension reload held until 2.1 commit lands. Elijah runs both."
+
+### 3.d End-to-end test log (filled live during Section 4)
+
+Listing URL, manual steps, observable proofs. Codex writes the test plan; Claude writes the live observation log.
+
+### 3.e Rework pile guard
+
+Each agent logs `git diff --stat HEAD` before AND after their commit. The 12 M + 7 ?? shape must be provable-preserved at every checkpoint.
+
+---
+
+## Section 4 — End-to-end job-application acceptance test
+
+**The ONE listing:** Indeed or ZipRecruiter posting hosted directly on the platform (not external redirect to Workday/Greenhouse/Lever). Filter:
+
+- Background-check filter from `user_background_check_constraint.md` (skip listings that REQUIRE passing one).
+- Burned-employer filter from `user_burned_employers.md` (skip All Trades Staffing).
+- Simplify.jobs supports the page (Indeed and ZipRecruiter both do per the v2.4.9 compatibility list).
+
+**Elijah's manual steps:**
+
+1. Pick the listing, copy URL.
+2. Confirm profile current: `python3 -m json.tool ~/.master_ai_profile.json | head -20`.
+3. Open Sensei REPL, type `apply <url>`.
+4. Approve any per-step prompt that surfaces (Review mode default; one keypress per approval).
+5. When side panel pauses at first-submit and prints the VERIFICATION GATE block: read it, type "yes submit" or "no stop".
+
+**What fires automatically (no human action between):**
+
+- BROWSER_NAV → listing
+- BROWSER_READ_PAGE → page context to backend
+- BROWSER_CLICK on apply button
+- BROWSER_FILL_FORM short-circuit pulls `/apply_profile`
+- Simplify popup auto-dismiss if it appears
+- BROWSER_CLICK on submit → server returns `{deferred: true, reason: "first_submit_pause"}` (pause gate)
+- After Elijah's "yes submit": dispatcher re-emits BROWSER_CLICK with consent flag → submit lands
+- content_script emits `confirmation_detected` → `log_application` writes `status:"submitted"` with `ref_number`
+
+**Three observable proofs of success (ALL three required):**
+
+1. `tail -1 ~/.master_ai_application_log.jsonl` shows `{"status":"submitted","ref_number":"<non-empty>","url":"<listing>"}`.
+2. Real confirmation email in Elijah's inbox from the listing site (Indeed/ZipRecruiter).
+3. `journalctl --user-unit master-ai-ui.service --since "5 min ago" | grep -c '"event":"confirmation_detected"'` increments by exactly 1.
+
+**Acceptance bar:** ONE real application filed. Anything less = failure even if every commit is green and every test passes.
+
+---
+
+## Section 5 — Risks / open questions for Elijah before execution starts
+
+1. **Email sender identity** — sender = `ebey317@gmail.com` (matches existing User-Agent at stt_server.py ~2768). Confirm or specify alternate.
+2. **Gmail app password vs OAuth** — app password is the fastest path. Confirm OK or pick OAuth (much more work).
+3. **REPL prefix style** — `apply <url>` (bare-word, matches `image:`/`max:`/`reason:` symmetry) vs `/apply <url>` (slash-style). Recommend bare-word. Confirm.
+4. **`/apply_start` implementation** — synthesize-the-prompt approach (cheap; reuses existing short-circuits) vs. direct directive injection (cleaner code, more surgery). Recommend synthesize. Confirm before Codex starts 2.5.
+5. **Test listing selection** — Elijah picks; agents do not pick. Site = Indeed or ZipRecruiter only for first run. Confirm.
+6. **"And = sequential" interaction** — Codex's 2.5 is two separate commits in sequence (one tool_use per assistant message), NOT parallel. Confirm understanding.
+7. **The email I owe** — the helper lands the *capability*. The specific email (recipient, subject, body, from-which-account) you wanted me to send last time still needs your specifics before I can send it. Once helper lands, give me those four pieces and I send. Confirm.
+
+---
+
+## Critical files referenced
+
+- `/home/elijah/scripts/sensei_extension/side_panel.js` (2.1)
+- `/home/elijah/scripts/master_ai.py` (2.4 + 2.5)
+- `/home/elijah/scripts/stt_server.py` (2.5)
+- `/home/elijah/MD/feedback_proactive_sourcing.md` (2.2, new)
+- `/home/elijah/MD/feedback_task_list_every_input.md` (2.3, new)
+- `/home/elijah/MD/MEMORY.md` (2.2 + 2.3, two new bullets)
+- `/home/elijah/MD/handoff_2026_05_17_loop_and_jobs.md` (post-ExitPlanMode copy of this plan)
+
+## Existing utilities to reuse (do not re-implement)
+
+- `load_keys()` in master_ai.py line ~576 — reads `~/.master_ai_keys` JSON. Pull `gmail_app_password` through it.
+- `log_application()` in master_ai.py line ~1323 — pattern to mirror for `log_email()`.
+- BROWSER_FILL_FORM short-circuit in stt_server.py line ~2019 — already pulls `/apply_profile`. No re-write.
+- `pause_before_first_submit_active` plumbing in stt_server.py ~1925-2833 — already implements the first-submit gate. No new pause code.
+- `maybeWarnSilentClaim` in side_panel.js line ~723 — uses `data.done === true || data.terminal_reason` predicate exactly. Mirror this in 2.1.
+- `simplify.jobs` filter at stt_server.py ~1467 + `simplify_dismissed` event at ~5572 — already coordinates with Simplify. No new code.
+
+---
+
+## Out of scope for today (don't add)
+
+- Pupil command palette wiring for `apply` button — separate plan, separate session.
+- OAuth instead of Gmail app password — much heavier, not needed for today's wedge.
+- Multi-account email routing (AOL/Outlook fallback) — single Gmail account is enough for the one-email-promise.
+- Batch=5 application runs — `feedback_job_application_pipeline` says batched, but TODAY's bar is ONE submission. Batch comes after one works.
+- Loop-gate server-side mirror (a defensive check on `stt_server.py:/chat/continue` that refuses when the prior turn was DONE) — only add if 2.1's extension-side gate proves insufficient in real testing.

@@ -1,0 +1,8 @@
+{
+  "model": "sonnet",
+  "effortLevel": "xhigh",
+  "theme": "auto",
+  "editorMode": "normal",
+  "autoCompactEnabled": true,
+  "skipAutoPermissionPrompt": true
+}
