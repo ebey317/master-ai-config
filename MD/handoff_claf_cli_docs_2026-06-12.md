@@ -6,22 +6,23 @@
 ## What happened
 - The active task file had a stale HVAC/cover-letter placeholder instead of the real request.
 - On doc/help follow-ups the local tool router collapsed back to `core` tools (`TaskList`, `Read`, `Bash`), breaking browser-loop continuity.
-- The model got stuck scrolling/clicking the Anthropic marketing footer instead of navigating directly to docs.
-- The first direct-URL guess (`/cli`) was a 404; the canonical CLI docs page is `/cli-reference`.
+- The model got stuck scrolling/clicking the Anthropic marketing footer instead of using search/tools to discover the docs page.
+- The canonical CLI docs page is `/cli-reference`, not `/cli`.
 
 ## Fixes committed
 | Repo | File | Change |
 |------|------|--------|
-| `projects/claf` | `claf_config.py` | Added doc/help/? signals to browser group; added short-followup fallback so a mid-browser queued command keeps browser tools. Added `mcp__sensei__find_doc_link` to the browser tool group. |
-| `projects/master-ai` | `sensei_mcp_server.py` | Hardened `click` schema to require `what`. Added new `find_doc_link` tool: fetch a docs landing page and return links matching a term (e.g. Anthropic Claude Code overview → CLI reference). |
+| `projects/claf` | `claf_config.py` | Added doc/help/? signals to browser group; added short-followup fallback so a mid-browser queued command keeps browser tools. Reordered browser tools so `search`/`find_doc_link` appear before `browse`. |
+| `projects/claf` | `charter/charter_browser.md` | Added rule: for docs/help requests without an exact URL, use `search` first; don't scroll the marketing homepage footer. |
+| `projects/claf` | `charter/charter_capabilities.md` + `orchestrator.py` | New always-injected capabilities slice so the model knows it has terminal access, browser tools, `search`, `find_doc_link`, and the docs workflow. |
+| `projects/master-ai` | `sensei_mcp_server.py` | Hardened `click` schema to require `what`. Added `find_doc_link` tool to discover doc URLs from a docs landing page. Removed hardcoded URL example from the description. |
 
 ## Current state
-- `~/.claf/current_task.json` updated with the real goal and marked complete.
-- The correct CLI docs page was opened directly in Chrome: `https://docs.anthropic.com/en/docs/claude-code/cli-reference`.
-- `claf.service` restarted; `orchestrator.py` is running the updated `claf_config.py`.
-- The previous authenticated `claude --chrome` session was killed after it stopped responding to terminal input.
+- `~/.claf/current_task.json` was deleted after the goal was captured (per charter).
+- A live authenticated Claude Code session is running the request and has created the `anthropic.com` tab.
+- `claf.service` restarted; the orchestrator now injects the capabilities slice on every local turn.
+- No manual page-open was performed — the agent is expected to figure out the docs URL using search/`find_doc_link`.
 
 ## Next steps / open items
-- Restart a fresh authenticated Claude Code session and verify the fixed tool set reaches the model.
-- Confirm `find_doc_link` is used on the next doc/help request instead of footer-scrolling.
-- Remaining queued tasks are in `~/.claf/current_task.json` / `~/.master_ai_profile.json` / the project TODO list (AI-103, profile builder, Telegram, Fair Chance Railway).
+- Let the live Claude Code session finish and verify it reaches the CLI reference via search/tools, not footer scrolling.
+- Remaining queued tasks are in the project TODO list (AI-103, profile builder, Telegram, Fair Chance Railway).
