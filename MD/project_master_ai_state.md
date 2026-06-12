@@ -1,6 +1,6 @@
 ---
 name: Master AI / Sensei — Current State
-description: 2026-04-29 state. HEAD `b7eacc5` "Update Codex handoff for v1.9". Tag `v1.9` cut on `b7828a3 Banner reads in plain words for phone voice-to-text`. Tree clean. Banner separator `│`/`·` → word "and"; legend keys `, . / ;` spelled `comma dot slash semicolon`; narrow `MODEL:CLOUD` → `MODEL:AUTO` (auto-router with cloud keys, not pinned). py_compile clean, parser 19/19. Stash `stash@{0}` preserved; do not drop without Elijah.
+description: 2026-06-12 state. Agent-catch-up session after Claude weekly-usage cap. CLAF merge conflict resolved and tests green; master-ai MCP CDP auto-focus committed; handoff docs reviewed. Three repos have unpushed commits. AI-103 exam is 19 days out. Open task list lives in `~/.claude/projects/-home-elijah/memory/project_open_tasks.md`.
 type: project
 originSessionId: 40445963-46e1-46f3-82c6-257d45f0bc25
 ---
@@ -21,6 +21,48 @@ Elijah's exact words 2026-04-19: *"There may be 11 to 12 to 16 hour days like to
 7. **What's pending** (A+ blockers, hardware to order, sudo pastes, decisions awaiting)
 8. **Open questions** Elijah hasn't answered
 9. **Today's feeling / framing quote** — preserve the emotional context
+
+## WHERE WE LEFT OFF (2026-06-12 — CLAF recovery, agent catch-up, commit/push prep)
+
+**Headline:** Usage cap hit while super-agent swarm was mid-flight. After top-up, I (Claude Code) spent this session catching up, fixing the broken CLAF rebase, committing the live MCP work, and writing this handoff.
+
+### Top-line status
+- `master-ai` repo: 4 unpushed commits on `main` (latest `d6dbae0` — MCP CDP tab-create auto-focus).
+- `claf` repo: 1 unpushed commit on `master` (`5d81884` — task-state persistence).
+- `master-ai-config` repo: 1 unpushed commit on `main` (`99d86d6` — initial bundle) plus this handoff update pending commit.
+- CLAF orchestrator is running clean; e2e + loop tests pass.
+- `trash_emails/` in claf is leftover test data — NOT real emails; leave untracked/ignored.
+- Mood: frustrated by the cap interrupt, but the core plumbing is back to green.
+
+### What was built / landed this session
+- **CLAF merge-conflict resolution** — `orchestrator.py` kept Pass 6 bare-JSON tool-call parser; `task_state.py` kept malformed-item tolerance. Rebase completed.
+- **CLAF service restart + verification** — fresh `claf.service` PID; `claf_e2e_test.py` and `claf_loop_test.py` both **ALL PASS**.
+- **`master-ai` MCP bridge commit** — `sensei_mcp_server.py` CDP tab-create auto-focus + scaffold helpers committed as `d6dbae0`.
+- **Stray cleanup** — removed `/tmp/claf_strays_2026-06-11/` and `/tmp/claf_parity_baseline/`; kept working test scripts in `/tmp`.
+
+### What was fixed
+- CLAF `SyntaxError` from unresolved `<<<<<<< HEAD` markers in `orchestrator.py`.
+- Stale `claf.service` running pre-fix code.
+
+### What’s pending / A+ blockers
+1. **Push all three repos** once operator confirms no private data in commits (master-ai-config has the initial bundle; master-ai/claf have code-only commits).
+2. **AI-103 cert prep** — exam July 1, 2026 (~19 days). Glossary/plan at `~/Desktop/MY_GLOSSARY.md` and `~/Desktop/AI103_STUDY_PLAN.md`.
+3. **Profile builder** — `~/.master_ai_profile.json` `work_history` is empty; this is the concrete blocker for real ATS job applications.
+4. **Telegram connector** — token → `~/scripts/.env`.
+5. **Fair Chance deploy** — Railway/Meta webhook/app review.
+6. **Command Center** — `intent_parser.py` + `mpv_executor.py`.
+7. **Gmail app password** — needed to actually test `SEND_EMAIL`.
+
+### Open questions
+- Should `trash_emails/` be added to `.gitignore` or deleted? (Operator said it is not real.)
+- Confirm push of the 6 unpushed commits across the three repos.
+
+### Memory files updated
+- This file (`project_master_ai_state.md`) — new 2026-06-12 section.
+- `session_snapshot.md` still current as of 2026-06-08; should be recompiled after next task change.
+
+### Today's feeling / framing quote
+Operator: *"maxed out on Claude … I cut off then I added more money to you."* The stack is green again; time to turn the money into shipped work.
 
 ## DONE 2026-04-28
 
