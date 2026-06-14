@@ -45,6 +45,7 @@ Elijah's exact words 2026-04-19: *"There may be 11 to 12 to 16 hour days like to
 - Stale `claf.service` running pre-fix code.
 
 ### What’s pending / A+ blockers
+Canonical open task list lives in `~/.claude/projects/-home-elijah/memory/project_open_tasks.md` and is injected at session start. Current priorities:
 1. **Push all three repos** once operator confirms no private data in commits (master-ai-config has the initial bundle; master-ai/claf have code-only commits).
 2. **AI-103 cert prep** — exam July 1, 2026 (~19 days). Glossary/plan at `~/Desktop/MY_GLOSSARY.md` and `~/Desktop/AI103_STUDY_PLAN.md`.
 3. **Profile builder** — `~/.master_ai_profile.json` `work_history` is empty; this is the concrete blocker for real ATS job applications.
